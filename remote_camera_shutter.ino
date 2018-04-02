@@ -32,6 +32,19 @@
  *       relying on internal pullups, or maybe even the limited drive
  *       capability of the pins...
  *
+ * NOTE: You can measure the shutter delay when the camera thinks a non-TTL
+ *       flash is connected by connecting pin10 through a 330 Ohm resistor
+ *       to the cameras center pin on the hot shoe. You don't need a ground
+ *       connection for the DMC-G80, since the sides of the hot shoe has
+ *       very low resistance to the ground in the remote shutter connection.
+ *         Keep in mind that just because I can make that connection on my
+ *       DMC-G80, this is not an assumption you can rely on, and previous or
+ *       future batches of this camera might be bricked if that connection is
+ *       done.
+ *         Unfortunately, the shutter delay seems to be significantly larger
+ *       when a flash is attached, so those delays are completely different
+ *       than the delays when no flash is attached.
+ *
  * NOTE: Uses pins 2 (lsb) to pin 9 (msb) as digital outputs to display duration
  *       since full shutter press as Gray-code. Has been used to drive LED:s,
  *       which have been photographed by the camera controlled by this remote
@@ -48,6 +61,8 @@ const int fullPressPin = 12;
 const int numLeds = 8;
 const unsigned char ledPins[] = {2, 3, 4, 5,  6, 7, 8, 9};
 
+const int hotShoePin = 10;
+
 unsigned int binaryToGray(unsigned int num)
 {
     return num ^ (num >> 1);
@@ -55,6 +70,9 @@ unsigned int binaryToGray(unsigned int num)
 
 void setup()
 {
+  pinMode(hotShoePin, INPUT);
+  digitalWrite(hotShoePin, HIGH);
+  
   digitalWrite(halfPressPin, LOW);
   digitalWrite(fullPressPin, LOW);
   pinMode(halfPressPin, OUTPUT);
@@ -74,8 +92,11 @@ void setup()
   Serial.println("Connected:");
 }
 
+static short lastFlashDelay = -1;
+
 void runTestCycle(int halfpress_ms)
 {
+  lastFlashDelay = -1;
   for (int n = 0; n < numLeds; n++)
   {
     digitalWrite(ledPins[n], LOW);
@@ -102,6 +123,11 @@ void runTestCycle(int halfpress_ms)
     {
       digitalWrite(ledPins[n], (grayCoded & 1) ? HIGH : LOW);
       grayCoded = grayCoded >> 1;
+    }
+
+    if (digitalRead(hotShoePin) ==  LOW && lastFlashDelay == -1)
+    {
+      lastFlashDelay = currentDelay;
     }
     
   } while (millis() - startMillis < 1000);
@@ -140,7 +166,17 @@ void loop() {
         runTestCycle(1000);
         Serial.print("cycle ");
         Serial.print(n + 1);
-        Serial.println(" of 100");
+        Serial.print(" of 100 :");
+        if (lastFlashDelay == -1)
+        {
+          Serial.println(" camera did not use external flash");
+        }
+        else
+        {
+          Serial.print(" flash occured after ");
+          Serial.print(lastFlashDelay);
+          Serial.println(" ms");
+        }
         delay(2000);
       }
     }
@@ -151,4 +187,3 @@ void loop() {
     Serial.println("0-3?");
   }
 }
-
