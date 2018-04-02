@@ -3,13 +3,19 @@
  *
  * Emulates a DMW-RS1
  *
+ * WARNING: DO NOT USE ANYTHING IN THIS CODE, OR MAKE ANY ELECTRICAL CONNECTIONS
+ *          TO ANY CAMERA UNLESS YOU KNOW EXACTLY WHAT YOU ARE DOING. EXPECT
+ *          THAT THIS CODE AND RELATED INSTRUCTIONS ARE FLAWED AND WILL BRICK
+ *          YOUR CAMERA.
+ *
+ *
  * Used circuit:
  *
  *                  _____             _____
  * 2.5mm pin4   ___|2k0  |____.______|2k7  |________________.__________.
  *                 |_____|    |      |_____|                |         _|_
  *                  _____     |                   _____     |        |36k|
- * arduino pin3 ___|330R |___|/   arduino pin2___|330R |___|/        |   |
+ * arduino pin12___|330R |___|/  arduino pin11___|330R |___|/        |   |
  *                 |_____|   |\e                 |_____|   |\e       |_._|
  *                            | BC547B                      | BC547B   |
  * 2.5mm pin3   ______________|_____________________________|__________|
@@ -26,54 +32,80 @@
  *       relying on internal pullups, or maybe even the limited drive
  *       capability of the pins...
  *
- * Starts 1MHz oscillator on pin 9 when full press activated (for measuring
- * shutter lag). Only expected to work with an arduino uno r3.
+ * NOTE: Uses pins 2 (lsb) to pin 9 (msb) as digital outputs to display duration
+ *       since full shutter press as Gray-code. Has been used to drive LED:s,
+ *       which have been photographed by the camera controlled by this remote
+ *       shutter, to characterize its shutter lag.
  *
  *
  * Copyright (c) 2018 Simon Gustafsson (www.optisimon.com)
  * Do whatever you like with this code, but please refer to me as the original author.
  */
 
-const int freqOutputPin = 9;   // OC1A output pin for ATmega32u4 (Arduino Micro)
-const int ocr1aval  = 7; // 7 for 1MHz, or 0 for 8MHz
+const int halfPressPin = 11;
+const int fullPressPin = 12;
 
-const int halfPressPin = 2;
-const int fullPressPin = 3;
+const int numLeds = 8;
+const unsigned char ledPins[] = {2, 3, 4, 5,  6, 7, 8, 9};
 
-// 1MHz counter
-void setup() {
+unsigned int binaryToGray(unsigned int num)
+{
+    return num ^ (num >> 1);
+}
+
+void setup()
+{
+  digitalWrite(halfPressPin, LOW);
+  digitalWrite(fullPressPin, LOW);
+  pinMode(halfPressPin, OUTPUT);
+  pinMode(fullPressPin, OUTPUT);
+
+  for (int n = 0; n < numLeds; n++)
+  {
+    digitalWrite(ledPins[n], LOW);
+    pinMode(ledPins[n], OUTPUT);
+  }
+
   Serial.begin(115200);
   while (!Serial)
   {
     ; // wait for serial port to connect. Only needed for native USB port.
   }
   Serial.println("Connected:");
-  pinMode(freqOutputPin, OUTPUT);
-  digitalWrite(halfPressPin, LOW);
-  digitalWrite(fullPressPin, LOW);
-  pinMode(halfPressPin, OUTPUT);
-  pinMode(fullPressPin, OUTPUT);
-//  TCCR1A = ( (1 << COM1A0));
-  TCCR1B = ((1 << WGM12) | (1 << CS10));
-  TIMSK1 = 0;
-  OCR1A = ocr1aval;
 }
 
 void runTestCycle(int halfpress_ms)
 {
-  digitalWrite(halfPressPin, HIGH);
-  if (halfpress_ms)
+  for (int n = 0; n < numLeds; n++)
   {
-    delay(halfpress_ms);
+    digitalWrite(ledPins[n], LOW);
   }
+  
+  unsigned long previousMillis = millis();
+  while (previousMillis == millis()) { /* just wait for ms transition */ };
+  unsigned long startMillis = millis();
+  
+  digitalWrite(halfPressPin, HIGH);
 
+  // Essentially: delay(halfpress_ms);
+  while (millis() - startMillis < halfpress_ms) { /* just wait */ };
+    
   digitalWrite(fullPressPin, HIGH);
-  TCCR1A = ( (1 << COM1A0));
 
-  // Wait a second
-  delay(1000);
+  startMillis = millis();
+  do {
+    unsigned short currentDelay = millis() - startMillis;
+    unsigned short grayCoded = binaryToGray(min(currentDelay, 255));
 
-  TCCR1A = 0;
+    // Set gray coded leds
+    for (int n = 0; n < numLeds; n++)
+    {
+      digitalWrite(ledPins[n], (grayCoded & 1) ? HIGH : LOW);
+      grayCoded = grayCoded >> 1;
+    }
+    
+  } while (millis() - startMillis < 1000);
+
   digitalWrite(halfPressPin, LOW);
   digitalWrite(fullPressPin, LOW);
 }
@@ -100,10 +132,23 @@ void loop() {
       Serial.println("1000ms half press before shutter");
       runTestCycle(1000);
     }
+    else if (b == '3')
+    {
+      Serial.println("100 cycles with 1000ms half press before shutter, and 2000 ms between cycles");
+      for (int n = 0; n < 100; n++)
+      {
+        runTestCycle(1000);
+        Serial.print("cycle ");
+        Serial.print(n + 1);
+        Serial.println(" of 100");
+        delay(2000);
+      }
+    }
     else
     {
       Serial.println("Unknown command");
     }
-    Serial.println("0-2?");
+    Serial.println("0-3?");
   }
 }
+
